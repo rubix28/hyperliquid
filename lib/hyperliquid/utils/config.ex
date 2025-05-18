@@ -10,6 +10,14 @@ defmodule Hyperliquid.Config do
     Application.get_env(:hyperliquid, :http_url, "https://api.hyperliquid.xyz")
   end
 
+  def rpc_base do
+    Application.get_env(:hyperliquid, :rpc_url, "https://rpc.hyperliquid.xyz")
+  end
+
+  def stats_base do
+    Application.get_env(:hyperliquid, :stats_url, "https://stats-data.hyperliquid.xyz/Mainnet/")
+  end
+
   @doc """
   Returns the ws URL of the API.
   """

@@ -148,6 +148,34 @@ defmodule Hyperliquid.Api.Info do
     post(%{type: "tvlBreakdown"})
   end
 
+  def max_builder_fee(user_address, builder_address) do
+    post(%{type: "maxBuilderFee", user: user_address, builder: builder_address})
+  end
+
+  def user_role(user_address) do
+    post(%{type: "userRole", user: user_address})
+  end
+
+  def delegations(user_address) do
+    post(%{type: "delegations", user: user_address})
+  end
+
+  def delegator_summary(user_address) do
+    post(%{type: "delegatorSummary", user: user_address})
+  end
+
+  def delegator_history(user_address) do
+    post(%{type: "delegatorHistory", user: user_address})
+  end
+
+  def delegator_rewards(user_address) do
+    post(%{type: "delegatorRewards", user: user_address})
+  end
+
+  def validators do
+    post(%{type: "validatorSummaries"})
+  end
+
   # only for testnet
   def eth_faucet(user_address) do
     post(%{type: "ethFaucet", user: user_address})

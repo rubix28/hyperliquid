@@ -32,9 +32,19 @@ defmodule Hyperliquid.Api do
       @headers [{"Content-Type", "application/json"}]
 
       def api_base, do: Config.api_base()
+      def rpc_base, do: Config.rpc_base()
+      def stats_base, do: Config.stats_base()
       def mainnet?, do: Config.mainnet?()
-      def endpoint, do: "#{api_base()}/#{@context}"
       defp secret, do: Config.secret()
+
+      def endpoint do
+        case @context do
+          "evm" -> "#{rpc_base()}/#{@context}"
+          "explorer" -> "#{rpc_base()}/#{@context}"
+          "stats" -> "https://stats-data.hyperliquid.xyz/Mainnet/"
+          _ -> "#{api_base()}/#{@context}"
+        end
+      end
 
       def post_action(action), do: post_action(action, nil, get_timestamp(), secret())
       def post_action(action, vault_address), do: post_action(action, vault_address, get_timestamp(), secret())
