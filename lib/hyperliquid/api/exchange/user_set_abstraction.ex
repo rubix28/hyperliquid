@@ -7,7 +7,8 @@ defmodule Hyperliquid.Api.Exchange.UserSetAbstraction do
   See: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint
   """
 
-  alias Hyperliquid.{Config, Signer, Utils}
+  alias Hyperliquid.{Config, Utils}
+  alias Hyperliquid.Api.Exchange.KeyUtils
   alias Hyperliquid.Transport.Http
 
   @valid_modes ["disabled", "unifiedAccount", "portfolioMargin"]
@@ -31,7 +32,7 @@ defmodule Hyperliquid.Api.Exchange.UserSetAbstraction do
       {:ok, result} = UserSetAbstraction.request("unifiedAccount")
   """
   def request(abstraction, opts \\ []) when abstraction in @valid_modes do
-    private_key = Hyperliquid.Api.Exchange.KeyUtils.resolve_private_key!(opts)
+    private_key = KeyUtils.resolve_private_key!(opts)
     nonce = generate_nonce()
     is_mainnet = Config.mainnet?()
 
@@ -58,16 +59,15 @@ defmodule Hyperliquid.Api.Exchange.UserSetAbstraction do
 
     with {:ok, domain_json} <- Jason.encode(domain),
          {:ok, types_json} <- Jason.encode(types),
-         {:ok, message_json} <- Jason.encode(message) do
-      sig =
-        Signer.sign_typed_data(
-          private_key,
-          domain_json,
-          types_json,
-          message_json,
-          "HyperliquidTransaction:UserSetAbstraction"
-        )
-
+         {:ok, message_json} <- Jason.encode(message),
+         {:ok, signature} <-
+           KeyUtils.sign_typed_data(
+             private_key,
+             domain_json,
+             types_json,
+             message_json,
+             "HyperliquidTransaction:UserSetAbstraction"
+           ) do
       action = %{
         type: "userSetAbstraction",
         hyperliquidChain: if(is_mainnet, do: "Mainnet", else: "Testnet"),
@@ -75,8 +75,6 @@ defmodule Hyperliquid.Api.Exchange.UserSetAbstraction do
         abstraction: abstraction,
         nonce: nonce
       }
-
-      signature = %{r: sig["r"], s: sig["s"], v: sig["v"]}
 
       Http.user_signed_request(action, signature, nonce, opts)
     end

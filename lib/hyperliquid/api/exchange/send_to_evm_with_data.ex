@@ -5,7 +5,7 @@ defmodule Hyperliquid.Api.Exchange.SendToEvmWithData do
   See: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint
   """
 
-  alias Hyperliquid.{Config, Signer, Utils}
+  alias Hyperliquid.{Config, Utils}
   alias Hyperliquid.Api.Exchange.KeyUtils
   alias Hyperliquid.Transport.Http
 
@@ -24,6 +24,9 @@ defmodule Hyperliquid.Api.Exchange.SendToEvmWithData do
 
   ## Options
     - `:private_key` - Private key for signing (falls back to config)
+    - `:expected_address` - Expected checksummed Ethereum address (0x-prefixed).
+      When provided, validates that the private key derives to this address,
+      preventing accidental use of an agent sub-key for a funds transfer.
     - `:address_encoding` - "hex" (default) or "base58"
 
   ## Returns
@@ -82,16 +85,15 @@ defmodule Hyperliquid.Api.Exchange.SendToEvmWithData do
 
     with {:ok, domain_json} <- Jason.encode(domain),
          {:ok, types_json} <- Jason.encode(types),
-         {:ok, message_json} <- Jason.encode(message) do
-      sig =
-        Signer.sign_typed_data(
-          private_key,
-          domain_json,
-          types_json,
-          message_json,
-          "HyperliquidTransaction:SendToEvmWithData"
-        )
-
+         {:ok, message_json} <- Jason.encode(message),
+         {:ok, signature} <-
+           KeyUtils.sign_typed_data(
+             private_key,
+             domain_json,
+             types_json,
+             message_json,
+             "HyperliquidTransaction:SendToEvmWithData"
+           ) do
       action =
         Jason.OrderedObject.new([
           {:type, "sendToEvmWithData"},
@@ -107,8 +109,6 @@ defmodule Hyperliquid.Api.Exchange.SendToEvmWithData do
           {:data, data},
           {:nonce, nonce}
         ])
-
-      signature = %{r: sig["r"], s: sig["s"], v: sig["v"]}
 
       Http.user_signed_request(action, signature, nonce, opts)
     end

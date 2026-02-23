@@ -75,11 +75,14 @@ defmodule Hyperliquid.Api.Info.UserFunding do
   """
   @spec total_funding(t()) :: {:ok, float()} | {:error, :parse_error}
   def total_funding(%__MODULE__{payments: payments}) do
-    try do
-      total = payments |> Enum.map(&String.to_float(&1.usdc)) |> Enum.sum()
-      {:ok, total}
-    rescue
-      _ -> {:error, :parse_error}
+    total = payments |> Enum.map(&parse_float(&1.usdc)) |> Enum.sum()
+    {:ok, total}
+  end
+
+  defp parse_float(str) do
+    case Float.parse(str) do
+      {f, _} -> f
+      :error -> 0.0
     end
   end
 end

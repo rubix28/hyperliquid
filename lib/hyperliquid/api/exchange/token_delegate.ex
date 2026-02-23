@@ -5,7 +5,8 @@ defmodule Hyperliquid.Api.Exchange.TokenDelegate do
   See: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint
   """
 
-  alias Hyperliquid.{Config, Signer, Utils}
+  alias Hyperliquid.{Config, Utils}
+  alias Hyperliquid.Api.Exchange.KeyUtils
   alias Hyperliquid.Transport.Http
 
   @doc """
@@ -33,7 +34,7 @@ defmodule Hyperliquid.Api.Exchange.TokenDelegate do
       {:ok, result} = TokenDelegate.request("0x...", true, 100_000_000)
   """
   def request(validator, is_undelegate, wei, opts \\ []) do
-    private_key = Hyperliquid.Api.Exchange.KeyUtils.resolve_private_key!(opts)
+    private_key = KeyUtils.resolve_private_key!(opts)
     nonce = generate_nonce()
     is_mainnet = Config.mainnet?()
 
@@ -64,16 +65,15 @@ defmodule Hyperliquid.Api.Exchange.TokenDelegate do
 
     with {:ok, domain_json} <- Jason.encode(domain),
          {:ok, types_json} <- Jason.encode(types),
-         {:ok, message_json} <- Jason.encode(message) do
-      sig =
-        Signer.sign_typed_data(
-          private_key,
-          domain_json,
-          types_json,
-          message_json,
-          "HyperliquidTransaction:TokenDelegate"
-        )
-
+         {:ok, message_json} <- Jason.encode(message),
+         {:ok, signature} <-
+           KeyUtils.sign_typed_data(
+             private_key,
+             domain_json,
+             types_json,
+             message_json,
+             "HyperliquidTransaction:TokenDelegate"
+           ) do
       action = %{
         type: "tokenDelegate",
         hyperliquidChain: if(is_mainnet, do: "Mainnet", else: "Testnet"),
@@ -83,8 +83,6 @@ defmodule Hyperliquid.Api.Exchange.TokenDelegate do
         wei: wei,
         nonce: nonce
       }
-
-      signature = %{r: sig["r"], s: sig["s"], v: sig["v"]}
 
       Http.user_signed_request(action, signature, nonce, opts)
     end
