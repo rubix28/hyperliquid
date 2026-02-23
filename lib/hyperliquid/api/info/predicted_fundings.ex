@@ -59,7 +59,9 @@ defmodule Hyperliquid.Api.Info.PredictedFundings do
     - `Ecto.Changeset.t()`
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
-  def changeset(predictions \\ %__MODULE__{}, %{predictions: attrs}) when is_list(attrs) do
+  def changeset(predictions \\ %__MODULE__{}, attrs)
+
+  def changeset(predictions, %{predictions: attrs}) when is_list(attrs) do
     parsed_predictions = Enum.map(attrs, &parse_coin_prediction/1)
 
     predictions

@@ -26,8 +26,11 @@ defmodule Hyperliquid.Api.Info.AllMids do
     doc: "Retrieve mid prices for all actively traded coins",
     returns: "Map of coin symbols to mid prices as strings"
 
-  # Convenience: allow request("dex_name") as shorthand for request(dex: "dex_name")
+  # Function heads with defaults + convenience overloads (grouped by function name)
+  def request(opts \\ [])
   def request(dex) when is_binary(dex), do: request(dex: dex)
+
+  def request!(opts \\ [])
   def request!(dex) when is_binary(dex), do: request!(dex: dex)
 
   @type t :: %__MODULE__{

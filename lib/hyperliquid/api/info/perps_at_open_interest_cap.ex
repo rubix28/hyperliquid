@@ -11,6 +11,7 @@ defmodule Hyperliquid.Api.Info.PerpsAtOpenInterestCap do
     type: :info,
     request_type: "perpsAtOpenInterestCap",
     params: [],
+    optional_params: [:dex],
     rate_limit_cost: 1,
     doc: "Retrieve perpetuals at open interest cap",
     returns: "Array of coin symbols at their maximum open interest"

@@ -298,33 +298,42 @@ defmodule Hyperliquid.Api.SubscriptionEndpoint do
         String key that uniquely identifies this subscription variant.
         """
         @spec generate_subscription_key(map()) :: String.t()
-        def generate_subscription_key(params) do
-          key_fields = unquote(key_fields)
-          request_type = unquote(request_type)
-          connection_type = unquote(connection_type)
-
+        unquote(
           case connection_type do
             :shared ->
-              "shared"
+              quote do
+                def generate_subscription_key(_params), do: "shared"
+              end
 
             :user_grouped ->
-              user = params[:user] || params["user"] || "unknown"
-              "user:#{user}"
+              quote do
+                def generate_subscription_key(params) do
+                  user = params[:user] || params["user"] || "unknown"
+                  "user:#{user}"
+                end
+              end
 
             :dedicated ->
-              if Enum.empty?(key_fields) do
-                request_type
-              else
-                parts =
-                  Enum.map(key_fields, fn field ->
-                    value = params[field] || params[to_string(field)] || "nil"
-                    to_string(value)
-                  end)
+              quote do
+                def generate_subscription_key(params) do
+                  key_fields = unquote(key_fields)
+                  request_type = unquote(request_type)
 
-                "#{request_type}:#{Enum.join(parts, ":")}"
+                  if Enum.empty?(key_fields) do
+                    request_type
+                  else
+                    parts =
+                      Enum.map(key_fields, fn field ->
+                        value = params[field] || params[to_string(field)] || "nil"
+                        to_string(value)
+                      end)
+
+                    "#{request_type}:#{Enum.join(parts, ":")}"
+                  end
+                end
               end
           end
-        end
+        )
       end
 
     request_ast =

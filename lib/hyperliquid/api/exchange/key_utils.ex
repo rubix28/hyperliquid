@@ -85,4 +85,23 @@ defmodule Hyperliquid.Api.Exchange.KeyUtils do
     validate_expected_address!(private_key, opts)
     private_key
   end
+
+  @doc """
+  Signs EIP-712 typed data and returns the signature components.
+
+  Wraps `Signer.sign_typed_data/5` with proper error handling,
+  matching the pattern used by L1 action modules.
+
+  ## Returns
+    - `{:ok, %{r: r, s: s, v: v}}` on success
+    - `{:error, {:signing_error, term()}}` on failure
+  """
+  @spec sign_typed_data(String.t(), String.t(), String.t(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, {:signing_error, term()}}
+  def sign_typed_data(private_key, domain_json, types_json, message_json, primary_type) do
+    case Signer.sign_typed_data(private_key, domain_json, types_json, message_json, primary_type) do
+      %{"r" => r, "s" => s, "v" => v} -> {:ok, %{r: r, s: s, v: v}}
+      error -> {:error, {:signing_error, error}}
+    end
+  end
 end

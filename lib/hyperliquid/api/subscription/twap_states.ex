@@ -1,25 +1,15 @@
-defmodule Hyperliquid.Api.Subscription.ClearinghouseState do
+defmodule Hyperliquid.Api.Subscription.TwapStates do
   @moduledoc """
-  WebSocket subscription for user's clearinghouse state.
+  WebSocket subscription for TWAP execution states.
 
   See: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions
   """
 
   use Hyperliquid.Api.SubscriptionEndpoint,
-    request_type: "clearinghouseState",
+    request_type: "twapStates",
     params: [:user, :dex],
     connection_type: :user_grouped,
-    doc: "Clearinghouse state - shares connection per user",
-    storage: [
-      postgres: [
-        enabled: true,
-        table: "clearinghouse_states"
-      ],
-      cache: [
-        enabled: true,
-        key_pattern: "clearinghouse:{{user}}"
-      ]
-    ]
+    doc: "TWAP execution states - shares connection per user"
 
   @type t :: %__MODULE__{}
 
@@ -27,10 +17,7 @@ defmodule Hyperliquid.Api.Subscription.ClearinghouseState do
   embedded_schema do
     field(:user, :string)
     field(:dex, :string)
-    field(:margin_summary, :map)
-    field(:cross_margin_summary, :map)
-    field(:withdrawable, :string)
-    field(:asset_positions, {:array, :map})
+    field(:states, {:array, :map})
   end
 
   @spec build_request(map()) :: {:ok, map()} | {:error, Ecto.Changeset.t()}
@@ -46,7 +33,7 @@ defmodule Hyperliquid.Api.Subscription.ClearinghouseState do
     if changeset.valid? do
       {:ok,
        %{
-         type: "clearinghouseState",
+         type: "twapStates",
          user: get_change(changeset, :user),
          dex: get_change(changeset, :dex)
        }}
@@ -58,13 +45,6 @@ defmodule Hyperliquid.Api.Subscription.ClearinghouseState do
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(event \\ %__MODULE__{}, attrs) do
     event
-    |> cast(attrs, [
-      :user,
-      :dex,
-      :margin_summary,
-      :cross_margin_summary,
-      :withdrawable,
-      :asset_positions
-    ])
+    |> cast(attrs, [:user, :dex, :states])
   end
 end

@@ -627,7 +627,7 @@ defmodule Hyperliquid.Api.Exchange.Order do
 
   # ===================== Debug Logging =====================
 
-  defp debug(message, data \\ nil) do
+  defp debug(message, data) do
     if Config.debug?() do
       Logger.debug("[Order] #{message}", data: data)
     end

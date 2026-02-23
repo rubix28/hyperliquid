@@ -570,6 +570,14 @@ defmodule Hyperliquid.WebSocket.Manager do
     # Normalize params for comparison (convert string keys to atoms)
     normalized_params = normalize_params(params)
 
+    # Use module-declared key_fields for dedup comparison (e.g., Candle uses [:coin, :interval])
+    key_fields =
+      if function_exported?(module, :__subscription_info__, 0) do
+        module.__subscription_info__()[:key_fields] || []
+      else
+        []
+      end
+
     existing =
       subscriptions
       |> Map.values()
@@ -577,7 +585,7 @@ defmodule Hyperliquid.WebSocket.Manager do
         sub.module == module &&
           sub.connection_pid != nil &&
           Process.alive?(sub.connection_pid) &&
-          params_match?(normalize_params(sub.params), normalized_params)
+          params_match?(normalize_params(sub.params), normalized_params, key_fields)
       end)
 
     case existing do
@@ -598,17 +606,21 @@ defmodule Hyperliquid.WebSocket.Manager do
     ArgumentError -> params
   end
 
-  defp params_match?(params1, params2) when is_map(params1) and is_map(params2) do
-    # Compare only the relevant subscription params (user, coin, etc.)
-    # Ignore internal fields
-    keys_to_compare = [:user, :coin, :dex, "user", "coin", "dex"]
+  defp params_match?(params1, params2, key_fields) when is_map(params1) and is_map(params2) do
+    # Use module-declared key_fields if available, otherwise fall back to default keys
+    keys =
+      if key_fields != [] do
+        key_fields
+      else
+        [:user, :coin, :dex]
+      end
 
-    Enum.all?(keys_to_compare, fn key ->
+    Enum.all?(keys, fn key ->
       Map.get(params1, key) == Map.get(params2, key)
     end)
   end
 
-  defp params_match?(_, _), do: false
+  defp params_match?(_, _, _), do: false
 
   defp get_ws_url(info) do
     ws_url_value = info[:ws_url]

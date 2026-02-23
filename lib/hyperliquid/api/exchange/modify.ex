@@ -71,7 +71,7 @@ defmodule Hyperliquid.Api.Exchange.Modify do
 
   # ===================== Helper Functions =====================
 
-  defp debug(message, data \\ nil) do
+  defp debug(message, data) do
     if Config.debug?() do
       Logger.debug("[Modify] #{message}", data: data)
     end

@@ -16,6 +16,7 @@ defmodule Hyperliquid.Api.Info.OpenOrders do
     type: :info,
     request_type: "openOrders",
     params: [:user],
+    optional_params: [:dex],
     rate_limit_cost: 20,
     doc: "Retrieve a user's open orders",
     returns: "OpenOrders struct with list of open orders",

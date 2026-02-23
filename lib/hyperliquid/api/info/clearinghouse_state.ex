@@ -13,6 +13,7 @@ defmodule Hyperliquid.Api.Info.ClearinghouseState do
     type: :info,
     request_type: "clearinghouseState",
     params: [:user],
+    optional_params: [:dex],
     rate_limit_cost: 2,
     doc: "Retrieve a user's perpetuals account summary",
     returns: "Clearinghouse state with margin summary and positions",
@@ -169,17 +170,23 @@ defmodule Hyperliquid.Api.Info.ClearinghouseState do
   end
 
   # Validates the leverage variant structure
+  # Keys may be camelCase (raw API) or snake_case (after normalization)
   defp validate_leverage(changeset) do
     validate_change(changeset, :leverage, fn :leverage, leverage ->
-      case leverage do
-        %{"type" => "isolated", "value" => value, "rawUsd" => _raw_usd}
-        when is_integer(value) and value >= 1 ->
+      type = leverage["type"]
+      value = leverage["value"]
+
+      has_raw_usd =
+        Map.has_key?(leverage, "rawUsd") or Map.has_key?(leverage, "raw_usd")
+
+      cond do
+        type == "isolated" and is_integer(value) and value >= 1 and has_raw_usd ->
           []
 
-        %{"type" => "cross", "value" => value} when is_integer(value) and value >= 1 ->
+        type == "cross" and is_integer(value) and value >= 1 ->
           []
 
-        _ ->
+        true ->
           [leverage: "must be valid isolated or cross leverage structure"]
       end
     end)

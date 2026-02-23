@@ -9,6 +9,7 @@ defmodule Hyperliquid.Api.Info.FrontendOpenOrders do
   ## Usage
 
       {:ok, orders} = FrontendOpenOrders.request("0x1234...")
+      {:ok, orders} = FrontendOpenOrders.request("0x1234...", dex: "some_dex")
       buys = FrontendOpenOrders.buys(orders)
   """
 
@@ -16,6 +17,7 @@ defmodule Hyperliquid.Api.Info.FrontendOpenOrders do
     type: :info,
     request_type: "frontendOpenOrders",
     params: [:user],
+    optional_params: [:dex],
     rate_limit_cost: 2,
     doc: "Retrieve open orders with frontend display information",
     returns: "List of open orders with additional display fields"

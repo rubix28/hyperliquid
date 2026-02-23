@@ -7,11 +7,13 @@ defmodule Hyperliquid.Api.Info.Meta do
   ## Usage
 
       {:ok, meta} = Meta.request()
+      {:ok, meta} = Meta.request(dex: "some_dex")
   """
 
   use Hyperliquid.Api.Endpoint,
     type: :info,
-    request: %{type: "meta"},
+    request_type: "meta",
+    optional_params: [:dex],
     rate_limit_cost: 20,
     doc: "Retrieve perpetuals metadata (universe and margin tables)",
     returns: "Meta struct with universe, margin tables, and collateral token"

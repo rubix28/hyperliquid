@@ -11,7 +11,7 @@ defmodule Hyperliquid.Api.Info.MetaAndAssetCtxs do
   use Hyperliquid.Api.Endpoint,
     type: :info,
     request_type: "metaAndAssetCtxs",
-    params: [],
+    optional_params: [:dex],
     rate_limit_cost: 2,
     doc: "Retrieve perpetuals metadata and asset contexts",
     returns: "Metadata and context for all perpetual assets"

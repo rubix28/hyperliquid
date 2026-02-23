@@ -17,76 +17,48 @@ defmodule Hyperliquid.Signer do
     ),
     nif_versions: ["2.15", "2.16", "2.17"]
 
-  @nif_error_msg "Rust NIF not available. Install precompiled binaries with `mix deps.get` or set HYPERLIQUID_BUILD_NIF=true to compile from source."
+  # Standard NIF fallback pattern: :erlang.nif_error/1 raises when the NIF
+  # binary hasn't been loaded. At runtime, these functions are replaced by
+  # the Rust NIF implementations via @on_load.
+  def compute_connection_id(_action_json, _nonce, _vault_address),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  # Fallbacks when NIF is not loaded - return descriptive error tuples
-  def compute_connection_id(_action_json, _nonce, _vault_address) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def compute_connection_id_ex(_action_json, _nonce, _vault_address, _expires_after),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def compute_connection_id_ex(_action_json, _nonce, _vault_address, _expires_after) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_exchange_action(_pk, _action_json, _nonce, _is_mainnet, _vault_addr),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_exchange_action(_pk, _action_json, _nonce, _is_mainnet, _vault_addr) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_exchange_action_ex(_pk, _action_json, _nonce, _is_mainnet, _vault_addr, _expires_after),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_exchange_action_ex(
-        _pk,
-        _action_json,
-        _nonce,
-        _is_mainnet,
-        _vault_addr,
-        _expires_after
-      ) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_l1_action(_pk, _connection_id, _is_mainnet),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_l1_action(_pk, _connection_id, _is_mainnet) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_usd_send(_pk, _dest, _amount, _time, _is_mainnet),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_usd_send(_pk, _dest, _amount, _time, _is_mainnet) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_withdraw3(_pk, _dest, _amount, _time, _is_mainnet),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_withdraw3(_pk, _dest, _amount, _time, _is_mainnet) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_spot_send(_pk, _dest, _token, _amount, _time, _is_mainnet),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_spot_send(_pk, _dest, _token, _amount, _time, _is_mainnet) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_approve_builder_fee(_pk, _builder, _max_fee_rate, _nonce, _is_mainnet),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_approve_builder_fee(_pk, _builder, _max_fee_rate, _nonce, _is_mainnet) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_approve_agent(_pk, _agent_addr, _agent_name, _nonce, _is_mainnet),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_approve_agent(_pk, _agent_addr, _agent_name, _nonce, _is_mainnet) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_multi_sig_action_ex(_pk, _action_json, _nonce, _is_mainnet, _vault_addr, _expires_after),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_multi_sig_action_ex(
-        _pk,
-        _action_json,
-        _nonce,
-        _is_mainnet,
-        _vault_addr,
-        _expires_after
-      ) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def sign_typed_data(_pk, _domain_json, _types_json, _message_json, _primary_type),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def sign_typed_data(_pk, _domain_json, _types_json, _message_json, _primary_type) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def to_checksum_address(_addr),
+    do: :erlang.nif_error(:nif_not_loaded)
 
-  def to_checksum_address(_addr) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
-
-  def derive_address(_private_key_hex) do
-    {:error, {:nif_not_loaded, @nif_error_msg}}
-  end
+  def derive_address(_private_key_hex),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

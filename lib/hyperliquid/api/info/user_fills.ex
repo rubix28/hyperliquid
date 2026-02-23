@@ -16,6 +16,7 @@ defmodule Hyperliquid.Api.Info.UserFills do
     type: :info,
     request_type: "userFills",
     params: [:user],
+    optional_params: [:aggregateByTime],
     rate_limit_cost: 20,
     doc: "Retrieve a user's trade fills",
     returns: "UserFills struct with list of executed trades",

@@ -190,7 +190,7 @@ defmodule Hyperliquid.Api.Exchange.BatchModify do
     System.system_time(:millisecond)
   end
 
-  defp debug(message, data \\ nil) do
+  defp debug(message, data) do
     if Config.debug?() do
       Logger.debug("[BatchModify] #{message}", data: data)
     end

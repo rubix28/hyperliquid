@@ -235,14 +235,6 @@ defmodule Hyperliquid.Api.Subscription.WebData3 do
     end
   end
 
-  # Used when WebSocket integration is connected
-  defp _handle_event(raw_data, callback) do
-    case parse_event(raw_data) do
-      {:ok, event} -> callback.(event)
-      {:error, _} = error -> error
-    end
-  end
-
   # ===================== Access Helpers =====================
 
   @doc """

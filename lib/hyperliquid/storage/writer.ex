@@ -363,18 +363,24 @@ defmodule Hyperliquid.Storage.Writer do
           |> maybe_add_updated_at(config, now)
         end)
 
-      try do
-        insert_opts = build_insert_opts(config)
-        {count, _} = Hyperliquid.Repo.insert_all(table, entries, insert_opts)
-        Logger.info("[Storage.Writer] Wrote #{count} records to #{table}")
-        {:ok, count}
-      rescue
-        error ->
-          Logger.error(
-            "[Storage.Writer] Postgres insert failed for #{table}: #{Exception.message(error)}"
-          )
+      repo = Hyperliquid.Repo
 
-          {:error, error}
+      if Code.ensure_loaded?(repo) do
+        try do
+          insert_opts = build_insert_opts(config)
+          {count, _} = apply(repo, :insert_all, [table, entries, insert_opts])
+          Logger.info("[Storage.Writer] Wrote #{count} records to #{table}")
+          {:ok, count}
+        rescue
+          error ->
+            Logger.error(
+              "[Storage.Writer] Postgres insert failed for #{table}: #{Exception.message(error)}"
+            )
+
+            {:error, error}
+        end
+      else
+        {:error, :repo_not_available}
       end
     end
   end

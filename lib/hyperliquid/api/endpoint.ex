@@ -242,10 +242,10 @@ defmodule Hyperliquid.Api.Endpoint do
     postgres_enabled = postgres_tables != []
 
     # Legacy single-table config (for backwards compatibility with storage functions)
-    postgres_table = get_primary_table(postgres_tables)
-    postgres_extract = get_primary_extract(postgres_tables)
-    postgres_conflict_target = get_primary_conflict_target(postgres_tables)
-    postgres_on_conflict = get_primary_on_conflict(postgres_tables)
+    _postgres_table = get_primary_table(postgres_tables)
+    _postgres_extract = get_primary_extract(postgres_tables)
+    _postgres_conflict_target = get_primary_conflict_target(postgres_tables)
+    _postgres_on_conflict = get_primary_on_conflict(postgres_tables)
 
     # context_params: which request params to merge into stored records (default [:user])
     context_params = Keyword.get(storage, :context_params, [:user])
@@ -256,6 +256,22 @@ defmodule Hyperliquid.Api.Endpoint do
 
     # Check if module defines preprocess/1
     has_preprocess = Module.defines?(env.module, {:preprocess, 1})
+
+    # Check if module defines its own build_request (custom override)
+    build_request_arity =
+      if Enum.empty?(optional_params), do: length(params), else: length(params) + 1
+
+    has_custom_build_request = Module.defines?(env.module, {:build_request, build_request_arity})
+
+    # Check if module defines its own parse_response (custom override)
+    has_custom_parse_response = Module.defines?(env.module, {:parse_response, 1})
+
+    # Check if module defines its own request clauses (e.g. convenience overloads)
+    # If so, the module must provide its own function heads with defaults
+    request_arity =
+      if Enum.empty?(optional_params), do: length(params), else: length(params) + 1
+
+    has_custom_request = Module.defines?(env.module, {:request, request_arity})
 
     # Raw response option - generates request_raw/N functions
     raw_response = Keyword.get(opts, :raw_response, true)
@@ -299,10 +315,10 @@ defmodule Hyperliquid.Api.Endpoint do
     endpoint_ast =
       cond do
         type == :stats ->
-          generate_stats_endpoint(request_type, rate_limit_cost, has_preprocess)
+          generate_stats_endpoint(request_type, rate_limit_cost, has_preprocess, has_custom_parse_response)
 
         static_request ->
-          generate_simple_endpoint(type, static_request, rate_limit_cost, has_preprocess)
+          generate_simple_endpoint(type, static_request, rate_limit_cost, has_preprocess, has_custom_parse_response)
 
         true ->
           generate_parametrized_endpoint(
@@ -311,7 +327,10 @@ defmodule Hyperliquid.Api.Endpoint do
             params,
             optional_params,
             rate_limit_cost,
-            has_preprocess
+            has_preprocess,
+            has_custom_build_request,
+            has_custom_parse_response,
+            has_custom_request
           )
       end
 
@@ -357,7 +376,7 @@ defmodule Hyperliquid.Api.Endpoint do
     end
   end
 
-  defp generate_stats_endpoint(endpoint_name, rate_limit_cost, has_preprocess) do
+  defp generate_stats_endpoint(endpoint_name, rate_limit_cost, has_preprocess, _has_custom_parse_response) do
     request_body =
       if has_preprocess do
         quote do
@@ -479,7 +498,7 @@ defmodule Hyperliquid.Api.Endpoint do
     end
   end
 
-  defp generate_simple_endpoint(type, request, rate_limit_cost, has_preprocess) do
+  defp generate_simple_endpoint(type, request, rate_limit_cost, has_preprocess, _has_custom_parse_response) do
     http_function = get_http_function(type)
     endpoint_name = request[:type] || "unknown"
 
@@ -616,7 +635,10 @@ defmodule Hyperliquid.Api.Endpoint do
          params,
          optional_params,
          rate_limit_cost,
-         has_preprocess
+         has_preprocess,
+         has_custom_build_request,
+         has_custom_parse_response,
+         has_custom_request
        ) do
     http_function = get_http_function(type)
 
@@ -726,12 +748,33 @@ defmodule Hyperliquid.Api.Endpoint do
           end
         end
 
-      quote do
-        @doc "Build the request payload."
-        @spec build_request(unquote_splicing(param_typespecs(params))) :: map()
-        def build_request(unquote_splicing(required_args)) do
-          unquote(request_map_ast)
+      build_request_ast =
+        unless has_custom_build_request do
+          quote do
+            @doc "Build the request payload."
+            @spec build_request(unquote_splicing(param_typespecs(params))) :: map()
+            def build_request(unquote_splicing(required_args)) do
+              unquote(request_map_ast)
+            end
+          end
         end
+
+      parse_response_ast =
+        unless has_custom_parse_response do
+          quote do
+            @doc "Parse and validate the API response."
+            @spec parse_response(map()) :: {:ok, t()} | {:error, term()}
+            def parse_response(data) when is_map(data) do
+              changeset(%__MODULE__{}, data)
+              |> apply_action(:validate)
+            end
+
+            def parse_response(_), do: {:error, :invalid_response_format}
+          end
+        end
+
+      quote do
+        unquote(build_request_ast)
 
         @doc "Make the API request and parse the response."
         @spec request(unquote_splicing(param_typespecs(params))) :: {:ok, t()} | {:error, term()}
@@ -754,14 +797,7 @@ defmodule Hyperliquid.Api.Endpoint do
           end
         end
 
-        @doc "Parse and validate the API response."
-        @spec parse_response(map()) :: {:ok, t()} | {:error, term()}
-        def parse_response(data) when is_map(data) do
-          changeset(%__MODULE__{}, data)
-          |> apply_action(:validate)
-        end
-
-        def parse_response(_), do: {:error, :invalid_response_format}
+        unquote(parse_response_ast)
 
         @doc "Get the rate limit cost for this endpoint."
         @spec rate_limit_cost() :: non_neg_integer()
@@ -872,23 +908,64 @@ defmodule Hyperliquid.Api.Endpoint do
           end
         end
 
-      quote do
-        @doc "Build the request payload."
-        @spec build_request(unquote_splicing(param_typespecs(params)), keyword()) :: map()
-        def build_request(unquote_splicing(required_args), opts \\ []) do
-          unquote(request_map_with_opts_ast)
+      build_request_with_opts_ast =
+        unless has_custom_build_request do
+          quote do
+            @doc "Build the request payload."
+            @spec build_request(unquote_splicing(param_typespecs(params)), keyword()) :: map()
+            def build_request(unquote_splicing(required_args), opts \\ []) do
+              unquote(request_map_with_opts_ast)
+            end
+          end
         end
+
+      parse_response_with_opts_ast =
+        unless has_custom_parse_response do
+          quote do
+            @doc "Parse and validate the API response."
+            @spec parse_response(map()) :: {:ok, t()} | {:error, term()}
+            def parse_response(data) when is_map(data) do
+              changeset(%__MODULE__{}, data)
+              |> apply_action(:validate)
+            end
+
+            def parse_response(_), do: {:error, :invalid_response_format}
+          end
+        end
+
+      # When the module defines its own request clauses (e.g. convenience overloads),
+      # it must provide function heads with defaults. The DSL only generates body clauses.
+      request_head_ast =
+        unless has_custom_request do
+          quote do
+            def request(unquote_splicing(required_args), opts \\ [])
+          end
+        end
+
+      request_bang_head_ast =
+        unless has_custom_request do
+          quote do
+            def request!(unquote_splicing(required_args), opts \\ [])
+          end
+        end
+
+      quote do
+        unquote(build_request_with_opts_ast)
 
         @doc "Make the API request and parse the response."
         @spec request(unquote_splicing(param_typespecs(params)), keyword()) ::
                 {:ok, t()} | {:error, term()}
-        def request(unquote_splicing(required_args), opts \\ []) do
+        unquote(request_head_ast)
+
+        def request(unquote_splicing(required_args), opts) do
           unquote(request_body_with_opts)
         end
 
         @doc "Make the API request, raising on error."
         @spec request!(unquote_splicing(param_typespecs(params)), keyword()) :: t()
-        def request!(unquote_splicing(required_args), opts \\ []) do
+        unquote(request_bang_head_ast)
+
+        def request!(unquote_splicing(required_args), opts) do
           case request(unquote_splicing(required_args), opts) do
             {:ok, result} ->
               result
@@ -901,14 +978,7 @@ defmodule Hyperliquid.Api.Endpoint do
           end
         end
 
-        @doc "Parse and validate the API response."
-        @spec parse_response(map()) :: {:ok, t()} | {:error, term()}
-        def parse_response(data) when is_map(data) do
-          changeset(%__MODULE__{}, data)
-          |> apply_action(:validate)
-        end
-
-        def parse_response(_), do: {:error, :invalid_response_format}
+        unquote(parse_response_with_opts_ast)
 
         @doc "Get the rate limit cost for this endpoint."
         @spec rate_limit_cost() :: non_neg_integer()
@@ -1290,7 +1360,7 @@ defmodule Hyperliquid.Api.Endpoint do
     end
   end
 
-  defp generate_simple_raw(http_function, request) do
+  defp generate_simple_raw(http_function, _request) do
     quote do
       @doc "Make the API request and return the raw response map (no key transformation)."
       @spec request_raw() :: {:ok, map()} | {:error, term()}

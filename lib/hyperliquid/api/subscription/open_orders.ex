@@ -7,7 +7,7 @@ defmodule Hyperliquid.Api.Subscription.OpenOrders do
 
   use Hyperliquid.Api.SubscriptionEndpoint,
     request_type: "openOrders",
-    params: [:user],
+    params: [:user, :dex],
     connection_type: :user_grouped,
     doc: "Open orders - shares connection per user",
     storage: [
@@ -40,16 +40,21 @@ defmodule Hyperliquid.Api.Subscription.OpenOrders do
 
   @spec build_request(map()) :: {:ok, map()} | {:error, Ecto.Changeset.t()}
   def build_request(params) do
-    types = %{user: :string}
+    types = %{user: :string, dex: :string}
 
     changeset =
       {%{}, types}
       |> cast(params, Map.keys(types))
-      |> validate_required([:user])
+      |> validate_required([:user, :dex])
       |> validate_format(:user, ~r/^0x[0-9a-fA-F]{40}$/)
 
     if changeset.valid? do
-      {:ok, %{type: "openOrders", user: get_change(changeset, :user)}}
+      {:ok,
+       %{
+         type: "openOrders",
+         user: get_change(changeset, :user),
+         dex: get_change(changeset, :dex)
+       }}
     else
       {:error, changeset}
     end
