@@ -214,7 +214,7 @@ defmodule Hyperliquid.WebSocket.Connection do
           %{key: state.key}
         )
 
-        Logger.info("WebSocket connected: #{state.key}")
+        Logger.debug("WebSocket connected: #{state.key}")
 
         # Schedule heartbeat
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
@@ -282,7 +282,7 @@ defmodule Hyperliquid.WebSocket.Connection do
 
   @impl true
   def handle_info({:gun_ws, _conn, _stream_ref, {:close, code, reason}}, state) do
-    Logger.warning("WebSocket closed (#{state.key}): #{code} - #{reason}")
+    Logger.debug("WebSocket closed (#{state.key}): #{code} - #{reason}")
     handle_disconnect(state)
   end
 
@@ -491,7 +491,7 @@ defmodule Hyperliquid.WebSocket.Connection do
   defp schedule_reconnect(state) do
     delay = Enum.at(@reconnect_delays, state.reconnect_attempts, List.last(@reconnect_delays))
 
-    Logger.info("Scheduling reconnect in #{delay}ms (attempt #{state.reconnect_attempts + 1})")
+    Logger.debug("Scheduling reconnect in #{delay}ms (attempt #{state.reconnect_attempts + 1})")
 
     Process.send_after(self(), :reconnect, delay)
 
