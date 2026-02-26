@@ -176,11 +176,8 @@ defmodule Hyperliquid.Api.Info.ClearinghouseState do
       type = leverage["type"]
       value = leverage["value"]
 
-      has_raw_usd =
-        Map.has_key?(leverage, "rawUsd") or Map.has_key?(leverage, "raw_usd")
-
       cond do
-        type == "isolated" and is_integer(value) and value >= 1 and has_raw_usd ->
+        type == "isolated" and is_integer(value) and value >= 1 ->
           []
 
         type == "cross" and is_integer(value) and value >= 1 ->
