@@ -57,7 +57,7 @@ defmodule Hyperliquid.Api.Info.UserFunding do
   defp payment_changeset(payment, attrs) do
     payment
     |> cast(attrs, [:time, :coin, :usdc, :szi, :funding_rate, :nSamples])
-    |> validate_required([:time, :coin, :usdc])
+    |> validate_required([:time])
   end
 
   # ===================== Helpers =====================
