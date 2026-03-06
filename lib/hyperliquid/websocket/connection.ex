@@ -171,7 +171,8 @@ defmodule Hyperliquid.WebSocket.Connection do
       request ->
         # Remove from subscriptions
         subscriptions = Map.delete(state.subscriptions, subscription_id)
-        state = %{state | subscriptions: subscriptions}
+        pending_subscriptions = Map.delete(state.pending_subscriptions, subscription_id)
+        state = %{state | subscriptions: subscriptions, pending_subscriptions: pending_subscriptions}
 
         # Send unsubscribe if connected
         if state.status == :connected do
