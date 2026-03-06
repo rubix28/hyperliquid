@@ -248,41 +248,50 @@ defmodule Hyperliquid.WebSocket.Manager do
         case module.build_request(coerced_params) do
           {:ok, request} ->
             # Determine which connection to use
-            {connection_key, connection_pid, state} =
-              get_or_create_connection(connection_type, subscription_key, params, ws_url, state)
+            case get_or_create_connection(
+                   connection_type,
+                   subscription_key,
+                   params,
+                   ws_url,
+                   state
+                 ) do
+              {:error, reason, state} ->
+                {:reply, {:error, {:connection_failed, reason}}, state}
 
-            # Create subscription record
-            subscription = %Subscription{
-              id: sub_id,
-              module: module,
-              params: params,
-              key: connection_key,
-              connection_type: connection_type,
-              connection_pid: connection_pid,
-              callback: callback,
-              subscribed_at: DateTime.utc_now()
-            }
+              {connection_key, connection_pid, state} ->
+                # Create subscription record
+                subscription = %Subscription{
+                  id: sub_id,
+                  module: module,
+                  params: params,
+                  key: connection_key,
+                  connection_type: connection_type,
+                  connection_pid: connection_pid,
+                  callback: callback,
+                  subscribed_at: DateTime.utc_now()
+                }
 
-            # Store in ETS and state
-            :ets.insert(:ws_subscriptions, {sub_id, subscription})
-            subscriptions = Map.put(state.subscriptions, sub_id, subscription)
+                # Store in ETS and state
+                :ets.insert(:ws_subscriptions, {sub_id, subscription})
+                subscriptions = Map.put(state.subscriptions, sub_id, subscription)
 
-            # Send subscription to connection
-            send_subscription(connection_pid, request, sub_id)
+                # Send subscription to connection
+                send_subscription(connection_pid, request, sub_id)
 
-            new_state = %{state | subscriptions: subscriptions, counter: state.counter + 1}
+                new_state = %{state | subscriptions: subscriptions, counter: state.counter + 1}
 
-            :telemetry.execute(
-              [:hyperliquid, :ws, :subscribe],
-              %{count: 1},
-              %{module: module, key: subscription_key}
-            )
+                :telemetry.execute(
+                  [:hyperliquid, :ws, :subscribe],
+                  %{count: 1},
+                  %{module: module, key: subscription_key}
+                )
 
-            Logger.info(
-              "Subscribed #{inspect(module)} with key #{subscription_key}, id: #{sub_id}"
-            )
+                Logger.info(
+                  "Subscribed #{inspect(module)} with key #{subscription_key}, id: #{sub_id}"
+                )
 
-            {:reply, {:ok, sub_id}, new_state}
+                {:reply, {:ok, sub_id}, new_state}
+            end
 
           {:error, reason} ->
             {:reply, {:error, reason}, state}
@@ -698,20 +707,39 @@ defmodule Hyperliquid.WebSocket.Manager do
     case Map.get(state.connections, connection_key) do
       nil ->
         # Create new connection
-        {:ok, pid} = start_connection(connection_key, ws_url)
-        Process.monitor(pid)
-        connections = Map.put(state.connections, connection_key, pid)
-        {connection_key, pid, %{state | connections: connections}}
+        case start_connection(connection_key, ws_url) do
+          {:ok, pid} ->
+            Process.monitor(pid)
+            connections = Map.put(state.connections, connection_key, pid)
+            {connection_key, pid, %{state | connections: connections}}
+
+          {:error, reason} ->
+            Logger.error(
+              "[WS.Manager] Failed to start connection #{connection_key}: #{inspect(reason)}"
+            )
+
+            {:error, reason, state}
+        end
 
       pid when is_pid(pid) ->
         if Process.alive?(pid) do
           {connection_key, pid, state}
         else
           # Connection died, create new one
-          {:ok, new_pid} = start_connection(connection_key, ws_url)
-          Process.monitor(new_pid)
-          connections = Map.put(state.connections, connection_key, new_pid)
-          {connection_key, new_pid, %{state | connections: connections}}
+          case start_connection(connection_key, ws_url) do
+            {:ok, new_pid} ->
+              Process.monitor(new_pid)
+              connections = Map.put(state.connections, connection_key, new_pid)
+              {connection_key, new_pid, %{state | connections: connections}}
+
+            {:error, reason} ->
+              Logger.error(
+                "[WS.Manager] Failed to restart connection #{connection_key}: #{inspect(reason)}"
+              )
+
+              connections = Map.delete(state.connections, connection_key)
+              {:error, reason, %{state | connections: connections}}
+          end
         end
     end
   end
