@@ -48,7 +48,7 @@ defmodule Hyperliquid.WebSocket.Manager.RecoveryTest do
 
     # Reset Manager state to clean baseline
     :sys.replace_state(manager, fn state ->
-      %{state | connections: %{}, subscriptions: %{}, counter: 0}
+      %{state | connections: %{}, subscriptions: %{}, counter: 0, zombie_check_ref: nil}
     end)
 
     # Clean ETS table
@@ -225,6 +225,113 @@ defmodule Hyperliquid.WebSocket.Manager.RecoveryTest do
       state = :sys.get_state(manager)
       # The connection should be the FakeConnection
       assert state.connections["shared"] == fake_pid
+    end
+  end
+
+  describe "zombie connection watchdog" do
+    test "zombie check kills connection with stale subscriptions", %{manager: manager} do
+      Application.put_env(:hyperliquid, :zombie_connection_threshold_ms, 100)
+      on_exit(fn -> Application.delete_env(:hyperliquid, :zombie_connection_threshold_ms) end)
+
+      # Spawn a "zombie" process
+      zombie_pid = spawn(fn -> Process.sleep(:infinity) end)
+      zombie_ref = Process.monitor(zombie_pid)
+
+      # Inject a stale subscription pointing to the zombie
+      :sys.replace_state(manager, fn state ->
+        subs = %{
+          "sub_zombie" => %Subscription{
+            id: "sub_zombie",
+            module: Hyperliquid.Api.Subscription.Candle,
+            params: %{coin: "BTC", interval: "1h"},
+            key: "shared",
+            connection_type: :shared,
+            connection_pid: zombie_pid,
+            callback: fn _msg -> :ok end,
+            subscribed_at: DateTime.utc_now(),
+            last_message_at: DateTime.add(DateTime.utc_now(), -1, :second)
+          }
+        }
+
+        %{state | connections: %{"shared" => zombie_pid}, subscriptions: subs}
+      end)
+
+      # Trigger zombie check
+      send(manager, :zombie_check)
+      # Wait for async processing
+      Process.sleep(200)
+
+      # The zombie should be dead
+      assert_receive {:DOWN, ^zombie_ref, :process, ^zombie_pid, :zombie_detected}, 1000
+    end
+
+    test "zombie check skips healthy connections", %{manager: manager} do
+      Application.put_env(:hyperliquid, :zombie_connection_threshold_ms, 100)
+      on_exit(fn -> Application.delete_env(:hyperliquid, :zombie_connection_threshold_ms) end)
+
+      healthy_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> if Process.alive?(healthy_pid), do: Process.exit(healthy_pid, :kill) end)
+
+      :sys.replace_state(manager, fn state ->
+        subs = %{
+          "sub_healthy" => %Subscription{
+            id: "sub_healthy",
+            module: Hyperliquid.Api.Subscription.Candle,
+            params: %{coin: "BTC", interval: "1h"},
+            key: "shared",
+            connection_type: :shared,
+            connection_pid: healthy_pid,
+            callback: fn _msg -> :ok end,
+            subscribed_at: DateTime.utc_now(),
+            last_message_at: DateTime.utc_now()
+          }
+        }
+
+        %{state | connections: %{"shared" => healthy_pid}, subscriptions: subs}
+      end)
+
+      send(manager, :zombie_check)
+      Process.sleep(200)
+
+      assert Process.alive?(healthy_pid), "healthy connection should not be killed"
+    end
+
+    test "zombie check disabled when threshold is nil", %{manager: manager} do
+      Application.delete_env(:hyperliquid, :zombie_connection_threshold_ms)
+
+      state = :sys.get_state(manager)
+      assert state[:zombie_check_ref] == nil, "zombie check should not be scheduled when threshold is nil"
+    end
+
+    test "zombie check skips subscriptions without callbacks", %{manager: manager} do
+      Application.put_env(:hyperliquid, :zombie_connection_threshold_ms, 100)
+      on_exit(fn -> Application.delete_env(:hyperliquid, :zombie_connection_threshold_ms) end)
+
+      no_callback_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> if Process.alive?(no_callback_pid), do: Process.exit(no_callback_pid, :kill) end)
+
+      :sys.replace_state(manager, fn state ->
+        subs = %{
+          "sub_no_cb" => %Subscription{
+            id: "sub_no_cb",
+            module: Hyperliquid.Api.Subscription.Candle,
+            params: %{coin: "BTC", interval: "1h"},
+            key: "shared",
+            connection_type: :shared,
+            connection_pid: no_callback_pid,
+            callback: nil,
+            subscribed_at: DateTime.utc_now(),
+            last_message_at: DateTime.add(DateTime.utc_now(), -1, :second)
+          }
+        }
+
+        %{state | connections: %{"shared" => no_callback_pid}, subscriptions: subs}
+      end)
+
+      send(manager, :zombie_check)
+      Process.sleep(200)
+
+      assert Process.alive?(no_callback_pid), "should not kill connection with only nil-callback subs"
     end
   end
 end

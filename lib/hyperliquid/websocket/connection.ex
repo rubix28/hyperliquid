@@ -29,7 +29,8 @@ defmodule Hyperliquid.WebSocket.Connection do
   require Logger
 
   @default_url "wss://api.hyperliquid.xyz/ws"
-  @heartbeat_interval 30_000
+  @heartbeat_interval 10_000
+  @upgrade_timeout 10_000
   @reconnect_delays [1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 
   defmodule State do
@@ -44,6 +45,8 @@ defmodule Hyperliquid.WebSocket.Connection do
       :reconnect_attempts,
       :heartbeat_ref,
       :status,
+      upgrade_timer_ref: nil,
+      last_pong_at: nil,
       pending_subscriptions: %{}
     ]
   end
@@ -219,6 +222,7 @@ defmodule Hyperliquid.WebSocket.Connection do
 
         # Schedule heartbeat
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
+        upgrade_timer_ref = Process.send_after(self(), :upgrade_timeout, @upgrade_timeout)
 
         state = %{
           state
@@ -226,7 +230,8 @@ defmodule Hyperliquid.WebSocket.Connection do
             stream_ref: stream_ref,
             status: :upgrading,
             reconnect_attempts: 0,
-            heartbeat_ref: heartbeat_ref
+            heartbeat_ref: heartbeat_ref,
+            upgrade_timer_ref: upgrade_timer_ref
         }
 
         # Wait for gun_upgrade message before resubscribing
@@ -249,11 +254,22 @@ defmodule Hyperliquid.WebSocket.Connection do
   @impl true
   def handle_info(:heartbeat, state) do
     if state.status == :connected do
-      send_message(state, %{method: "ping"})
+      pong_stale? =
+        state.last_pong_at != nil and
+          System.monotonic_time(:millisecond) - state.last_pong_at > @heartbeat_interval * 2
+
+      if pong_stale? do
+        Logger.warning("WebSocket pong timeout (#{state.key})")
+        handle_disconnect(state)
+      else
+        send_message(state, %{method: "ping"})
+        heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
+        {:noreply, %{state | heartbeat_ref: heartbeat_ref}}
+      end
+    else
+      # Not connected — still reschedule so heartbeat resumes after upgrade
       heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
       {:noreply, %{state | heartbeat_ref: heartbeat_ref}}
-    else
-      {:noreply, state}
     end
   end
 
@@ -302,17 +318,26 @@ defmodule Hyperliquid.WebSocket.Connection do
   @impl true
   def handle_info({:gun_upgrade, _conn, _stream_ref, ["websocket"], _headers}, state) do
     Logger.debug("WebSocket upgrade complete: #{state.key}")
-
-    # Now we can set status to connected and resubscribe
-    state = %{state | status: :connected}
+    if state.upgrade_timer_ref, do: Process.cancel_timer(state.upgrade_timer_ref)
+    state = %{state | status: :connected, upgrade_timer_ref: nil, last_pong_at: System.monotonic_time(:millisecond)}
     resubscribe_all(state)
-
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:gun_up, _conn, _protocol}, state) do
     # Gun connection established (before WS upgrade) — handled via :gun_upgrade
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:upgrade_timeout, %State{status: :upgrading} = state) do
+    Logger.warning("WebSocket upgrade timeout (#{state.key})")
+    handle_disconnect(state)
+  end
+
+  @impl true
+  def handle_info(:upgrade_timeout, state) do
     {:noreply, state}
   end
 
@@ -328,6 +353,10 @@ defmodule Hyperliquid.WebSocket.Connection do
 
     if state.heartbeat_ref do
       Process.cancel_timer(state.heartbeat_ref)
+    end
+
+    if state.upgrade_timer_ref do
+      Process.cancel_timer(state.upgrade_timer_ref)
     end
 
     if state.conn do
@@ -353,6 +382,7 @@ defmodule Hyperliquid.WebSocket.Connection do
       transport: :tls,
       # Disable gun's built-in retry — we manage reconnection ourselves
       retry: 0,
+      tcp_opts: [{:keepalive, true}],
       tls_opts: [
         verify: :verify_peer,
         cacerts: :public_key.cacerts_get(),
@@ -440,7 +470,7 @@ defmodule Hyperliquid.WebSocket.Connection do
   end
 
   defp handle_ws_message(%{"channel" => "pong"}, state) do
-    {:noreply, state}
+    {:noreply, %{state | last_pong_at: System.monotonic_time(:millisecond)}}
   end
 
   defp handle_ws_message(%{"channel" => _channel, "data" => _data} = message, state) do
@@ -479,12 +509,16 @@ defmodule Hyperliquid.WebSocket.Connection do
       Process.cancel_timer(state.heartbeat_ref)
     end
 
+    if state.upgrade_timer_ref do
+      Process.cancel_timer(state.upgrade_timer_ref)
+    end
+
     # Close connection if still open
     if state.conn do
       :gun.close(state.conn)
     end
 
-    state = %{state | conn: nil, stream_ref: nil, status: :disconnected, heartbeat_ref: nil}
+    state = %{state | conn: nil, stream_ref: nil, status: :disconnected, heartbeat_ref: nil, upgrade_timer_ref: nil, last_pong_at: nil}
 
     schedule_reconnect(state)
   end

@@ -202,13 +202,16 @@ defmodule Hyperliquid.WebSocket.Manager do
     # Create ETS table for subscriptions
     :ets.new(:ws_subscriptions, [:named_table, :set, :public, read_concurrency: true])
 
+    zombie_check_ref = schedule_zombie_check()
+
     state = %{
       # Map of connection_key => connection_pid
       connections: %{},
       # Map of subscription_id => subscription
       subscriptions: %{},
       # Counter for generating unique IDs
-      counter: 0
+      counter: 0,
+      zombie_check_ref: zombie_check_ref
     }
 
     {:ok, state}
@@ -539,6 +542,7 @@ defmodule Hyperliquid.WebSocket.Manager do
 
   # Delayed retry interval for when Registry lookup fails (DynamicSupervisor may not have restarted yet)
   @recovery_retry_delay_ms 100
+  @zombie_check_interval 30_000
 
   defp recover_connection(connection_key, dead_pid, affected_subs, state) do
     # Try to find a restarted Connection in Registry (DynamicSupervisor auto-restart)
@@ -578,6 +582,40 @@ defmodule Hyperliquid.WebSocket.Manager do
         Logger.warning("[WS.Manager] Retry failed for #{connection_key}, #{length(affected_subs)} sub(s) remain orphaned")
         {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_info(:zombie_check, state) do
+    threshold_ms = Application.get_env(:hyperliquid, :zombie_connection_threshold_ms, nil)
+
+    if threshold_ms do
+      now = DateTime.utc_now()
+
+      # Group callback-bearing subscriptions by connection
+      subs_by_conn =
+        state.subscriptions
+        |> Map.values()
+        |> Enum.filter(& &1.callback)
+        |> Enum.filter(& &1.connection_pid)
+        |> Enum.group_by(& &1.connection_pid)
+
+      # Kill connections where ALL callback subs are stale
+      Enum.each(subs_by_conn, fn {pid, subs} ->
+        all_stale? =
+          Enum.all?(subs, fn sub ->
+            ref_time = sub.last_message_at || sub.subscribed_at
+            ref_time != nil and DateTime.diff(now, ref_time, :millisecond) > threshold_ms
+          end)
+
+        if all_stale? and Process.alive?(pid) do
+          Logger.warning("[WS.Manager] Killing zombie connection #{inspect(pid)}")
+          Process.exit(pid, :zombie_detected)
+        end
+      end)
+    end
+
+    zombie_check_ref = schedule_zombie_check()
+    {:noreply, %{state | zombie_check_ref: zombie_check_ref}}
   end
 
   defp adopt_connection(connection_key, dead_pid, new_pid, affected_subs, state) do
@@ -644,6 +682,13 @@ defmodule Hyperliquid.WebSocket.Manager do
   end
 
   # ===================== Private Functions =====================
+
+  defp schedule_zombie_check do
+    case Application.get_env(:hyperliquid, :zombie_connection_threshold_ms, nil) do
+      nil -> nil
+      _threshold -> Process.send_after(self(), :zombie_check, @zombie_check_interval)
+    end
+  end
 
   defp get_subscription_info(module) do
     # Ensure module is loaded before checking for exported functions
