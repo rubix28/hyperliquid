@@ -503,32 +503,144 @@ defmodule Hyperliquid.WebSocket.Manager do
   def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
     Logger.warning("WebSocket connection #{inspect(pid)} down: #{inspect(reason)}")
 
-    # Find and clean up connection
-    {connection_key, _} =
-      Enum.find(state.connections, {nil, nil}, fn {_key, conn_pid} ->
-        conn_pid == pid
-      end)
+    # Find affected subscriptions — this is the source of truth, not state.connections
+    # (state.connections may already have been replaced by a concurrent subscribe)
+    affected =
+      Enum.filter(state.subscriptions, fn {_id, sub} -> sub.connection_pid == pid end)
 
-    connections =
-      if connection_key do
-        Map.delete(state.connections, connection_key)
-      else
-        state.connections
+    # Derive connection key from affected subs or state.connections
+    connection_key =
+      case affected do
+        [{_id, sub} | _] -> sub.key
+        [] ->
+          case Enum.find(state.connections, fn {_key, conn_pid} -> conn_pid == pid end) do
+            {key, _} -> key
+            nil -> nil
+          end
       end
 
-    # Mark affected subscriptions as disconnected
+    # Remove dead PID from connections (only if it still points to the dead PID)
+    connections =
+      case connection_key && Map.get(state.connections, connection_key) do
+        ^pid -> Map.delete(state.connections, connection_key)
+        _ -> state.connections
+      end
+
+    state = %{state | connections: connections}
+
+    if affected == [] do
+      # No subs affected — just clean up the connections map
+      {:noreply, state}
+    else
+      # Attempt recovery using the key from affected subs
+      recover_connection(connection_key, pid, affected, state)
+    end
+  end
+
+  # Delayed retry interval for when Registry lookup fails (DynamicSupervisor may not have restarted yet)
+  @recovery_retry_delay_ms 100
+
+  defp recover_connection(connection_key, dead_pid, affected_subs, state) do
+    # Try to find a restarted Connection in Registry (DynamicSupervisor auto-restart)
+    case Hyperliquid.WebSocket.Connection.lookup(connection_key) do
+      {:ok, new_pid} ->
+        Logger.info("[WS.Manager] Found restarted connection #{connection_key}: #{inspect(new_pid)}")
+        adopt_connection(connection_key, dead_pid, new_pid, affected_subs, state)
+
+      {:error, :not_found} ->
+        # DynamicSupervisor may not have restarted yet — schedule a retry
+        Logger.info("[WS.Manager] Connection #{connection_key} not in Registry yet, retrying in #{@recovery_retry_delay_ms}ms")
+        Process.send_after(self(), {:retry_recovery, connection_key, dead_pid, affected_subs}, @recovery_retry_delay_ms)
+        # Temporarily orphan in state + ETS so nothing routes to dead PID
+        orphan_subscriptions(dead_pid, state)
+    end
+  end
+
+  @impl true
+  def handle_info({:retry_recovery, connection_key, dead_pid, affected_subs}, state) do
+    # Second attempt to find the restarted Connection in Registry
+    case Hyperliquid.WebSocket.Connection.lookup(connection_key) do
+      {:ok, new_pid} ->
+        Logger.info("[WS.Manager] Retry found restarted connection #{connection_key}: #{inspect(new_pid)}")
+        # Re-filter affected subs from current state (they were orphaned with nil pid)
+        current_affected =
+          affected_subs
+          |> Enum.filter(fn {id, _sub} -> Map.has_key?(state.subscriptions, id) end)
+          |> Enum.map(fn {id, _old_sub} -> {id, state.subscriptions[id]} end)
+
+        if current_affected == [] do
+          {:noreply, state}
+        else
+          adopt_connection(connection_key, nil, new_pid, current_affected, state)
+        end
+
+      {:error, :not_found} ->
+        Logger.warning("[WS.Manager] Retry failed for #{connection_key}, #{length(affected_subs)} sub(s) remain orphaned")
+        {:noreply, state}
+    end
+  end
+
+  defp adopt_connection(connection_key, dead_pid, new_pid, affected_subs, state) do
+    Process.monitor(new_pid)
+    connections = Map.put(state.connections, connection_key, new_pid)
+
+    # Collect affected sub IDs for efficient lookup
+    affected_ids = MapSet.new(affected_subs, fn {id, _} -> id end)
+
+    # Rebind affected subscriptions to new PID + update ETS
     subscriptions =
       state.subscriptions
       |> Enum.map(fn {id, sub} ->
-        if sub.connection_pid == pid do
-          {id, %{sub | connection_pid: nil}}
+        if MapSet.member?(affected_ids, id) and sub.connection_pid in [dead_pid, nil] do
+          updated = %{sub | connection_pid: new_pid}
+          :ets.insert(:ws_subscriptions, {id, updated})
+          {id, updated}
         else
           {id, sub}
         end
       end)
       |> Map.new()
 
+    # Replay subscription requests on new Connection
+    replay_subscriptions(affected_subs, new_pid)
+
     {:noreply, %{state | connections: connections, subscriptions: subscriptions}}
+  end
+
+  defp orphan_subscriptions(dead_pid, state) do
+    subscriptions =
+      state.subscriptions
+      |> Enum.map(fn {id, sub} ->
+        if sub.connection_pid == dead_pid do
+          updated = %{sub | connection_pid: nil}
+          :ets.insert(:ws_subscriptions, {id, updated})
+          {id, updated}
+        else
+          {id, sub}
+        end
+      end)
+      |> Map.new()
+
+    {:noreply, %{state | subscriptions: subscriptions}}
+  end
+
+  defp replay_subscriptions(affected_subs, new_pid) do
+    Enum.each(affected_subs, fn {_id, sub} ->
+      try do
+        case sub.module.build_request(coerce_numeric_params(sub.module, sub.params)) do
+          {:ok, request} ->
+            send_subscription(new_pid, request, sub.id)
+
+          {:error, reason} ->
+            Logger.warning(
+              "[WS.Manager] Failed to rebuild request for #{sub.id}: #{inspect(reason)}"
+            )
+        end
+      rescue
+        e ->
+          Logger.error("[WS.Manager] Exception replaying #{sub.id}: #{Exception.message(e)}")
+      end
+    end)
   end
 
   # ===================== Private Functions =====================
@@ -752,10 +864,17 @@ defmodule Hyperliquid.WebSocket.Manager do
       key: connection_key, manager: self(), url: ws_url
     }
 
-    DynamicSupervisor.start_child(
-      Hyperliquid.WebSocket.ConnectionSupervisor,
-      child_spec
-    )
+    case DynamicSupervisor.start_child(Hyperliquid.WebSocket.ConnectionSupervisor, child_spec) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        Logger.info("[WS.Manager] Adopting existing connection #{connection_key}: #{inspect(pid)}")
+        {:ok, pid}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp send_subscription(connection_pid, request, subscription_id) do
