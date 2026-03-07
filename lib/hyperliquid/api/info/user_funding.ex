@@ -31,18 +31,31 @@ defmodule Hyperliquid.Api.Info.UserFunding do
       @moduledoc "Individual funding payment record."
 
       field(:time, :integer)
+      field(:hash, :string)
       field(:coin, :string)
       field(:usdc, :string)
       field(:szi, :string)
       field(:funding_rate, :string)
-      field(:nSamples, :integer)
+      field(:n_samples, :integer)
     end
   end
 
   # ===================== Preprocessing =====================
 
   @doc false
-  def preprocess(data) when is_list(data), do: %{payments: data}
+  def preprocess(data) when is_list(data) do
+    payments =
+      Enum.map(data, fn
+        %{"delta" => delta} = item when is_map(delta) ->
+          item |> Map.merge(delta) |> Map.delete("delta")
+
+        item ->
+          item
+      end)
+
+    %{payments: payments}
+  end
+
   def preprocess(data), do: data
 
   # ===================== Changesets =====================
@@ -56,7 +69,7 @@ defmodule Hyperliquid.Api.Info.UserFunding do
 
   defp payment_changeset(payment, attrs) do
     payment
-    |> cast(attrs, [:time, :coin, :usdc, :szi, :funding_rate, :nSamples])
+    |> cast(attrs, [:time, :hash, :coin, :usdc, :szi, :funding_rate, :n_samples])
     |> validate_required([:time])
   end
 
@@ -79,7 +92,9 @@ defmodule Hyperliquid.Api.Info.UserFunding do
     {:ok, total}
   end
 
-  defp parse_float(str) do
+  defp parse_float(nil), do: 0.0
+
+  defp parse_float(str) when is_binary(str) do
     case Float.parse(str) do
       {f, _} -> f
       :error -> 0.0
