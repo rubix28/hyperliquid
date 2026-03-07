@@ -540,28 +540,8 @@ defmodule Hyperliquid.WebSocket.Manager do
     end
   end
 
-  # Delayed retry interval for when Registry lookup fails (DynamicSupervisor may not have restarted yet)
-  @recovery_retry_delay_ms 100
-  @zombie_check_interval 30_000
-
-  defp recover_connection(connection_key, dead_pid, affected_subs, state) do
-    # Try to find a restarted Connection in Registry (DynamicSupervisor auto-restart)
-    case Hyperliquid.WebSocket.Connection.lookup(connection_key) do
-      {:ok, new_pid} ->
-        Logger.info("[WS.Manager] Found restarted connection #{connection_key}: #{inspect(new_pid)}")
-        adopt_connection(connection_key, dead_pid, new_pid, affected_subs, state)
-
-      {:error, :not_found} ->
-        # DynamicSupervisor may not have restarted yet — schedule a retry
-        Logger.info("[WS.Manager] Connection #{connection_key} not in Registry yet, retrying in #{@recovery_retry_delay_ms}ms")
-        Process.send_after(self(), {:retry_recovery, connection_key, dead_pid, affected_subs}, @recovery_retry_delay_ms)
-        # Temporarily orphan in state + ETS so nothing routes to dead PID
-        orphan_subscriptions(dead_pid, state)
-    end
-  end
-
   @impl true
-  def handle_info({:retry_recovery, connection_key, dead_pid, affected_subs}, state) do
+  def handle_info({:retry_recovery, connection_key, _dead_pid, affected_subs}, state) do
     # Second attempt to find the restarted Connection in Registry
     case Hyperliquid.WebSocket.Connection.lookup(connection_key) do
       {:ok, new_pid} ->
@@ -616,6 +596,26 @@ defmodule Hyperliquid.WebSocket.Manager do
 
     zombie_check_ref = schedule_zombie_check()
     {:noreply, %{state | zombie_check_ref: zombie_check_ref}}
+  end
+
+  # Delayed retry interval for when Registry lookup fails (DynamicSupervisor may not have restarted yet)
+  @recovery_retry_delay_ms 100
+  @zombie_check_interval 30_000
+
+  defp recover_connection(connection_key, dead_pid, affected_subs, state) do
+    # Try to find a restarted Connection in Registry (DynamicSupervisor auto-restart)
+    case Hyperliquid.WebSocket.Connection.lookup(connection_key) do
+      {:ok, new_pid} ->
+        Logger.info("[WS.Manager] Found restarted connection #{connection_key}: #{inspect(new_pid)}")
+        adopt_connection(connection_key, dead_pid, new_pid, affected_subs, state)
+
+      {:error, :not_found} ->
+        # DynamicSupervisor may not have restarted yet — schedule a retry
+        Logger.info("[WS.Manager] Connection #{connection_key} not in Registry yet, retrying in #{@recovery_retry_delay_ms}ms")
+        Process.send_after(self(), {:retry_recovery, connection_key, dead_pid, affected_subs}, @recovery_retry_delay_ms)
+        # Temporarily orphan in state + ETS so nothing routes to dead PID
+        orphan_subscriptions(dead_pid, state)
+    end
   end
 
   defp adopt_connection(connection_key, dead_pid, new_pid, affected_subs, state) do
