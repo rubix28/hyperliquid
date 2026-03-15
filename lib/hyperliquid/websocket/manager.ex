@@ -924,13 +924,27 @@ defmodule Hyperliquid.WebSocket.Manager do
 
   defp send_subscription(connection_pid, request, subscription_id) do
     if connection_pid && Process.alive?(connection_pid) do
-      Hyperliquid.WebSocket.Connection.subscribe(connection_pid, request, subscription_id)
+      try do
+        Hyperliquid.WebSocket.Connection.subscribe(connection_pid, request, subscription_id)
+      catch
+        :exit, reason ->
+          Logger.warning(
+            "[WS.Manager] Subscribe delivery deferred (connection not ready): #{inspect(reason)}"
+          )
+      end
     end
   end
 
   defp send_unsubscription(connection_pid, subscription) do
     if connection_pid && Process.alive?(connection_pid) do
-      Hyperliquid.WebSocket.Connection.unsubscribe(connection_pid, subscription.id)
+      try do
+        Hyperliquid.WebSocket.Connection.unsubscribe(connection_pid, subscription.id)
+      catch
+        :exit, reason ->
+          Logger.warning(
+            "[WS.Manager] Unsubscribe delivery deferred: #{inspect(reason)}"
+          )
+      end
     end
   end
 
