@@ -742,6 +742,7 @@ defmodule Hyperliquid.Cache do
         existing -> Map.merge(existing, mids)
       end
 
+    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
     cache_put(:all_mids, merged_mids)
   end
 
@@ -759,7 +760,54 @@ defmodule Hyperliquid.Cache do
         existing -> Map.put(existing, coin, price)
       end
 
+    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
     cache_put(:all_mids, updated_mids)
+  end
+
+  @doc """
+  Returns the age of the cached mid prices in milliseconds.
+
+  Uses monotonic time for immunity to clock skew/NTP jumps.
+  Returns `:infinity` if mids have never been updated.
+  """
+  @spec mids_age_ms() :: non_neg_integer() | :infinity
+  def mids_age_ms do
+    case get(:last_mids_update_at) do
+      nil -> :infinity
+      timestamp -> System.monotonic_time(:millisecond) - timestamp
+    end
+  end
+
+  @doc """
+  Returns true if cached mid prices are younger than `max_age_ms`.
+
+  Returns false if mids have never been updated.
+  """
+  @spec mids_fresh?(non_neg_integer()) :: boolean()
+  def mids_fresh?(max_age_ms) when is_integer(max_age_ms) do
+    case mids_age_ms() do
+      :infinity -> false
+      age -> age <= max_age_ms
+    end
+  end
+
+  @doc """
+  Force-refresh mid prices via HTTP API.
+
+  Calls `Http.all_mids()` and updates the cache on success.
+  Returns `:ok` on success, `{:error, term()}` on failure.
+  """
+  @spec refresh_mids() :: :ok | {:error, term()}
+  def refresh_mids do
+    case Hyperliquid.Transport.Http.all_mids() do
+      {:ok, mids} ->
+        update_mids(mids)
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("[Cache] HTTP refresh_mids failed: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   # ===================== WebSocket Subscription =====================
