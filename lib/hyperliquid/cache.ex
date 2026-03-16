@@ -742,8 +742,8 @@ defmodule Hyperliquid.Cache do
         existing -> Map.merge(existing, mids)
       end
 
-    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
     cache_put(:all_mids, merged_mids)
+    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
   end
 
   @doc """
@@ -760,8 +760,8 @@ defmodule Hyperliquid.Cache do
         existing -> Map.put(existing, coin, price)
       end
 
-    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
     cache_put(:all_mids, updated_mids)
+    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
   end
 
   @doc """
