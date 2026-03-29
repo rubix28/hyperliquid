@@ -114,30 +114,9 @@ defmodule Hyperliquid.Api.Exchange.Order do
   @spec market_order(String.t(), boolean(), number() | String.t(), keyword()) ::
           limit_order() | {:error, term()}
   def market_order(coin, is_buy, sz, opts \\ []) do
-    with {:ok, asset, sz_decimals, is_spot} <- resolve_coin(coin) do
+    with {:ok, asset, sz_decimals, is_spot} <- resolve_coin(coin),
+         {:ok, slippage_price} <- resolve_slippage_price(coin, is_buy, sz_decimals, is_spot, opts) do
       formatted_size = Format.format_size(sz, sz_decimals)
-
-      slippage_price =
-        case Keyword.get(opts, :slippage_price) do
-          nil ->
-            slippage = Keyword.get(opts, :slippage, @default_slippage)
-
-            case Cache.get_mid(coin) do
-              nil ->
-                raise ArgumentError,
-                      "Mid price not found for #{coin}. Ensure cache is initialized."
-
-              mid_price ->
-                raw_price =
-                  if is_buy, do: mid_price * (1 + slippage), else: mid_price * (1 - slippage)
-
-                Format.format_price(raw_price, sz_decimals, perp: not is_spot)
-            end
-
-          price ->
-            Format.format_price(price, sz_decimals, perp: not is_spot)
-        end
-
       limit(asset, is_buy, slippage_price, formatted_size, Keyword.merge([tif: "Ioc"], opts))
     end
   end
@@ -245,6 +224,27 @@ defmodule Hyperliquid.Api.Exchange.Order do
           end
 
         {:ok, asset, sz_decimals || 0, is_spot}
+    end
+  end
+
+  defp resolve_slippage_price(coin, is_buy, sz_decimals, is_spot, opts) do
+    case Keyword.get(opts, :slippage_price) do
+      nil ->
+        slippage = Keyword.get(opts, :slippage, @default_slippage)
+
+        case Cache.get_mid(coin) do
+          nil ->
+            {:error, :no_mid_price}
+
+          mid_price ->
+            raw_price =
+              if is_buy, do: mid_price * (1 + slippage), else: mid_price * (1 - slippage)
+
+            {:ok, Format.format_price(raw_price, sz_decimals, perp: not is_spot)}
+        end
+
+      price ->
+        {:ok, Format.format_price(price, sz_decimals, perp: not is_spot)}
     end
   end
 
@@ -402,10 +402,12 @@ defmodule Hyperliquid.Api.Exchange.Order do
       # With explicit slippage price
       Order.market(0, true, "0.1", slippage_price: "100000.0")
   """
-  @spec market(non_neg_integer(), boolean(), String.t(), keyword()) :: limit_order()
+  @spec market(non_neg_integer(), boolean(), String.t(), keyword()) ::
+          limit_order() | {:error, term()}
   def market(asset, is_buy, sz, opts \\ []) do
-    slippage_price = calculate_slippage_price(opts, is_buy, asset)
-    limit(asset, is_buy, slippage_price, sz, Keyword.merge([tif: "Ioc"], opts))
+    with {:ok, slippage_price} <- calculate_slippage_price(opts, is_buy, asset) do
+      limit(asset, is_buy, slippage_price, sz, Keyword.merge([tif: "Ioc"], opts))
+    end
   end
 
   defp calculate_slippage_price(opts, is_buy, asset) do
@@ -417,24 +419,24 @@ defmodule Hyperliquid.Api.Exchange.Order do
         if coin do
           case Cache.get_mid(coin) do
             nil ->
-              raise ArgumentError,
-                    "Mid price not found for #{coin}. Either provide :slippage_price or ensure cache is initialized."
+              {:error, :no_mid_price}
 
             mid_price ->
-              price = if is_buy, do: mid_price * (1 + slippage), else: mid_price * (1 - slippage)
+              price =
+                if is_buy, do: mid_price * (1 + slippage), else: mid_price * (1 - slippage)
+
               sz_decimals = Cache.sz_decimals_by_asset(asset)
               is_perp = asset < 10_000
-              Format.format_price(price, sz_decimals, perp: is_perp)
+              {:ok, Format.format_price(price, sz_decimals, perp: is_perp)}
           end
         else
-          raise ArgumentError,
-                "Could not resolve coin for asset #{asset}. Provide :slippage_price or ensure cache is initialized."
+          {:error, {:coin_not_found, asset}}
         end
 
       price ->
         sz_decimals = Cache.sz_decimals_by_asset(asset)
         is_perp = asset < 10_000
-        Format.format_price(price, sz_decimals, perp: is_perp)
+        {:ok, Format.format_price(price, sz_decimals, perp: is_perp)}
     end
   end
 
