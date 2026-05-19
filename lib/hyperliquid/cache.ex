@@ -310,7 +310,16 @@ defmodule Hyperliquid.Cache do
     # Store mids if available
     if mids_data do
       debug("Storing mids", %{mids_count: map_size(mids_data)})
+      now_ms = System.monotonic_time(:millisecond)
+
+      coin_times =
+        mids_data
+        |> Map.keys()
+        |> Enum.into(%{}, fn coin -> {coin, now_ms} end)
+
       cache_put(:all_mids, mids_data)
+      cache_put(:mid_update_times, coin_times)
+      cache_put(:last_mids_update_at, now_ms)
     end
 
     # Store combined maps (only if we have any data)
@@ -437,6 +446,13 @@ defmodule Hyperliquid.Cache do
       # Store mids with original string keys (no transformation)
       debug("Storing mids", %{mids_count: map_size(mids)})
 
+      now_ms = System.monotonic_time(:millisecond)
+
+      coin_times =
+        mids
+        |> Map.keys()
+        |> Enum.into(%{}, fn coin -> {coin, now_ms} end)
+
       # Store all data (no TTL - entries persist until updated)
       cache_put(:perp_meta, base_meta)
       cache_put(:perp_meta_by_dex, perp_meta_by_dex)
@@ -444,6 +460,8 @@ defmodule Hyperliquid.Cache do
       cache_put(:margin_tables, margin_tables)
       cache_put(:spot_meta, spot_meta)
       cache_put(:all_mids, mids)
+      cache_put(:mid_update_times, coin_times)
+      cache_put(:last_mids_update_at, now_ms)
       cache_put(:asset_map, asset_map)
       cache_put(:decimal_map, decimal_map)
       cache_put(:asset_to_sz_decimals, asset_to_sz_decimals)
@@ -555,6 +573,38 @@ defmodule Hyperliquid.Cache do
         end
     end
   end
+
+  @doc """
+  Get the mid price for a coin only if its per-coin freshness is within `max_age_ms`.
+
+  Returns nil if the coin is missing from `:all_mids`, missing from
+  `:mid_update_times` (fail-closed on missing per-coin timestamp), or stale.
+  """
+  def get_mid_fresh(coin, max_age_ms)
+      when is_binary(coin) and is_integer(max_age_ms) do
+    with mids when is_map(mids) <- get(:all_mids),
+         price when not is_nil(price) <- Map.get(mids, coin),
+         times when is_map(times) <- get(:mid_update_times),
+         ts when is_integer(ts) <- Map.get(times, coin),
+         age = System.monotonic_time(:millisecond) - ts,
+         true <- age <= max_age_ms do
+      parse_mid_price(price)
+    else
+      _ -> nil
+    end
+  end
+
+  defp parse_mid_price(price) when is_float(price), do: price
+  defp parse_mid_price(price) when is_integer(price), do: price * 1.0
+
+  defp parse_mid_price(price) when is_binary(price) do
+    case Float.parse(price) do
+      {value, _rest} -> value
+      :error -> nil
+    end
+  end
+
+  defp parse_mid_price(_), do: nil
 
   @doc """
   Get the asset index for a coin symbol.
@@ -742,8 +792,22 @@ defmodule Hyperliquid.Cache do
         existing -> Map.merge(existing, mids)
       end
 
+    now_ms = System.monotonic_time(:millisecond)
+
+    coin_times =
+      mids
+      |> Map.keys()
+      |> Enum.into(%{}, fn coin -> {coin, now_ms} end)
+
+    merged_times =
+      case get(:mid_update_times) do
+        nil -> coin_times
+        existing -> Map.merge(existing, coin_times)
+      end
+
     cache_put(:all_mids, merged_mids)
-    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
+    cache_put(:mid_update_times, merged_times)
+    cache_put(:last_mids_update_at, now_ms)
   end
 
   @doc """
@@ -760,8 +824,17 @@ defmodule Hyperliquid.Cache do
         existing -> Map.put(existing, coin, price)
       end
 
+    now_ms = System.monotonic_time(:millisecond)
+
+    updated_times =
+      case get(:mid_update_times) do
+        nil -> %{coin => now_ms}
+        existing -> Map.put(existing, coin, now_ms)
+      end
+
     cache_put(:all_mids, updated_mids)
-    cache_put(:last_mids_update_at, System.monotonic_time(:millisecond))
+    cache_put(:mid_update_times, updated_times)
+    cache_put(:last_mids_update_at, now_ms)
   end
 
   @doc """
